@@ -1,39 +1,41 @@
-import { supabase } from "@/lib/supabase";
+import { NextRequest, NextResponse } from "next/server";
+import { analyzeResumeWithLLM, type LLMAnalysisResult } from "@/lib/llmService";
+import clientPromise from "@/lib/mongo";
 
-import { analyzeResumeWithLLM } from "@/lib/llmService";
+export async function POST(req: NextRequest) {
+  try {
+    const formData = await req.formData();
+    const resumeFile = formData.get("file") as File;
 
-export async function POST(req: Request) {
+    if (!resumeFile)
+      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
 
-const formData = await req.formData();
+    const resumeText = await resumeFile.text();
 
-const file = formData.get("file") as File;
+    // Analyze resume with Gemini LLM
+    const llmResult: LLMAnalysisResult = await analyzeResumeWithLLM(resumeText);
 
-const text = await file.text();
+    // Save to MongoDB
+    const client = await clientPromise;
+    const db = client.db("resumeMatcher");
+    const resumesCollection = db.collection("resumes");
 
-const structured = await analyzeResumeWithLLM(text);
+    const inserted = await resumesCollection.insertOne({
+      resume_text: resumeText,
+      llm_summary: llmResult.llm_summary,
+      llm_skills: llmResult.llm_skills,
+      llm_roles: llmResult.llm_roles,
+      llm_experience_years: llmResult.llm_experience_years,
+      createdAt: new Date(),
+    });
 
-const { data } = await supabase
-
-.from("resumes")
-
-.insert({
-
-resume_text: text,
-
-llm_summary: structured.summary,
-
-llm_skills: structured.skills,
-
-llm_roles: structured.roles,
-
-llm_experience_years: structured.experience_years
-
-})
-
-.select()
-
-.single();
-
-return Response.json(data);
-
+    return NextResponse.json({
+      message: "Resume uploaded and analyzed successfully",
+      id: inserted.insertedId,
+      llmResult,
+    });
+  } catch (err) {
+    console.error("Upload error:", err);
+    return NextResponse.json({ error: "Failed to upload resume" }, { status: 500 });
+  }
 }

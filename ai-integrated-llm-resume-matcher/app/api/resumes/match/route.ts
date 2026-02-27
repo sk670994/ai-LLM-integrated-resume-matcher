@@ -1,52 +1,46 @@
-import { supabase } from "@/lib/supabase";
+import clientPromise from "@/lib/mongo";
 import { matchResumeWithLLM } from "@/lib/llmService";
+import type { ResumeMatchResult } from "@/lib/types";
 
 export async function POST(req: Request) {
   try {
     const { jobRequirements } = await req.json();
 
-    // Fetch resumes safely
-    const { data: resumes, error } = await supabase
-      .from("resumes")
-      .select("*");
+    if (!jobRequirements || typeof jobRequirements !== "string") {
+      return Response.json(
+        { error: "jobRequirements is required" },
+        { status: 400 }
+      );
+    }
 
-    if (error) {
-      console.error("Supabase fetch error:", error);
-      return new Response(JSON.stringify({ error: "Database error" }), {
-        status: 500,
+    const client = await clientPromise;
+    const db = client.db("resumeMatcher");
+    const resumes = await db.collection("resumes").find().toArray();
+
+    const results: Array<ResumeMatchResult & { _id: string }> = [];
+
+    for (const resume of resumes) {
+      const resumeData = {
+        resume_text: resume.resume_text ?? resume.text ?? "",
+        llm_summary: resume.llm_summary ?? "",
+        llm_skills: resume.llm_skills ?? [],
+        llm_roles: resume.llm_roles ?? [],
+        llm_experience_years: resume.llm_experience_years ?? 0,
+      };
+
+      const llmResult = await matchResumeWithLLM(jobRequirements, resumeData);
+
+      results.push({
+        _id: resume._id.toString(),
+        ...llmResult,
       });
     }
 
-    // If no resumes, return empty array
-    if (!resumes || resumes.length === 0) {
-      return new Response(JSON.stringify([]));
-    }
-
-    const results = [];
-
-    // Async parallel matching for speed
-    for (const resume of resumes) {
-      try {
-        const match = await matchResumeWithLLM(
-          jobRequirements,
-          JSON.stringify(resume)
-        );
-
-        results.push({
-          ...resume,
-          ...match,
-        });
-      } catch (llmError) {
-        console.error("LLM match error:", llmError);
-      }
-    }
-
-    // Sort by match_score safely
     results.sort((a, b) => (b.match_score ?? 0) - (a.match_score ?? 0));
 
-    return new Response(JSON.stringify(results));
-  } catch (err) {
-    console.error("POST /resumes/match error:", err);
-    return new Response(JSON.stringify([]));
+    return Response.json(results, { status: 200 });
+  } catch (error) {
+    console.error("Match route error:", error);
+    return Response.json({ error: "Failed to match resumes" }, { status: 500 });
   }
 }
