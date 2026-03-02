@@ -1,52 +1,43 @@
-import { supabase } from "@/lib/supabase";
+import { NextRequest, NextResponse } from "next/server";
+import { getMongoClient, getDbName } from "@/lib/mongo";
 import { matchResumeWithLLM } from "@/lib/llmService";
+import { ObjectId } from "mongodb";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const { jobRequirements } = await req.json();
+    const { resumeId, jobDescription } = await req.json();
 
-    // Fetch resumes safely
-    const { data: resumes, error } = await supabase
-      .from("resumes")
-      .select("*");
-
-    if (error) {
-      console.error("Supabase fetch error:", error);
-      return new Response(JSON.stringify({ error: "Database error" }), {
-        status: 500,
-      });
+    if (!resumeId || !jobDescription) {
+      return NextResponse.json({ error: "Missing data" }, { status: 400 });
     }
 
-    // If no resumes, return empty array
-    if (!resumes || resumes.length === 0) {
-      return new Response(JSON.stringify([]));
+    const client = await getMongoClient();
+    const db = client.db(getDbName());
+
+    const resume = await db.collection("resumes").findOne({
+      _id: new ObjectId(resumeId),
+    });
+
+    if (!resume) {
+      return NextResponse.json({ error: "Resume not found" }, { status: 404 });
     }
 
-    const results = [];
+    const finalResult = await matchResumeWithLLM(resume.text || "", jobDescription);
 
-    // Async parallel matching for speed
-    for (const resume of resumes) {
-      try {
-        const match = await matchResumeWithLLM(
-          jobRequirements,
-          JSON.stringify(resume)
-        );
+    await db.collection("matches").insertOne({
+      resumeId: resume._id,
+      jobDescription,
+      result: finalResult,
+      createdAt: new Date(),
+    });
 
-        results.push({
-          ...resume,
-          ...match,
-        });
-      } catch (llmError) {
-        console.error("LLM match error:", llmError);
-      }
-    }
+    return NextResponse.json(finalResult, { status: 200 });
 
-    // Sort by match_score safely
-    results.sort((a, b) => (b.match_score ?? 0) - (a.match_score ?? 0));
-
-    return new Response(JSON.stringify(results));
-  } catch (err) {
-    console.error("POST /resumes/match error:", err);
-    return new Response(JSON.stringify([]));
+  } catch (error) {
+    console.error("Match error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Match failed" },
+      { status: 500 }
+    );
   }
 }

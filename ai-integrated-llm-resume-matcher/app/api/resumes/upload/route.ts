@@ -1,39 +1,51 @@
-import { supabase } from "@/lib/supabase";
+import { NextRequest, NextResponse } from "next/server";
+import { getMongoClient, getDbName } from "@/lib/mongo";
+import pdfParse from "pdf-parse";
 
-import { analyzeResumeWithLLM } from "@/lib/llmService";
+export async function POST(req: NextRequest) {
+  try {
+    const formData = await req.formData();
+    const file = formData.get("file") as File;
 
-export async function POST(req: Request) {
+    if (!file) {
+      return NextResponse.json(
+        { error: "No file uploaded" },
+        { status: 400 }
+      );
+    }
 
-const formData = await req.formData();
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
 
-const file = formData.get("file") as File;
+    const parsed = await pdfParse(buffer);
+    const extractedText = parsed.text;
 
-const text = await file.text();
+    if (!extractedText) {
+      return NextResponse.json(
+        { error: "Could not extract text from PDF" },
+        { status: 400 }
+      );
+    }
 
-const structured = await analyzeResumeWithLLM(text);
+    const client = await getMongoClient();
+    const db = client.db(getDbName());
 
-const { data } = await supabase
+    const result = await db.collection("resumes").insertOne({
+      fileName: file.name,
+      text: extractedText,
+      createdAt: new Date(),
+    });
 
-.from("resumes")
+    return NextResponse.json({
+      message: "Resume uploaded successfully",
+      resumeId: result.insertedId,
+    });
 
-.insert({
-
-resume_text: text,
-
-llm_summary: structured.summary,
-
-llm_skills: structured.skills,
-
-llm_roles: structured.roles,
-
-llm_experience_years: structured.experience_years
-
-})
-
-.select()
-
-.single();
-
-return Response.json(data);
-
+  } catch (error) {
+    console.error("Upload error:", error);
+    return NextResponse.json(
+      { error: "Upload failed" },
+      { status: 500 }
+    );
+  }
 }

@@ -3,67 +3,35 @@
 import { useState } from "react";
 
 export default function UploadResume() {
+  const [file, setFile] = useState<File | null>(null);
 
-const [loading, setLoading] = useState(false);
+  const handleUpload = async () => {
+    if (!file) return;
 
-async function upload(
-e: React.ChangeEvent<HTMLInputElement>
-) {
+    const formData = new FormData();
+    formData.append("file", file);
 
-if (!e.target.files?.[0]) return;
+    const response = await fetch("/api/resumes/upload", {
+      method: "POST",
+      body: formData,
+    });
 
-setLoading(true);
+    const data = await response.json();
+    console.log(data);
+    alert("Resume uploaded!");
+  };
 
-const formData = new FormData();
+  return (
+    <div>
+      <input
+        type="file"
+        accept=".pdf"
+        onChange={(e) => setFile(e.target.files?.[0] || null)}
+      />
 
-formData.append("file", e.target.files[0]);
-
-await fetch("/api/resumes/upload", {
-
-method: "POST",
-
-body: formData
-
-});
-
-setLoading(false);
-
-alert("Resume Uploaded");
-
-}
-
-return (
-
-<div>
-
-<h2 className="text-xl font-semibold mb-4">
-
-Upload Resume
-
-</h2>
-
-<input
-
-type="file"
-
-onChange={upload}
-
-className="border p-2 rounded w-full"
-
-/>
-
-{loading && (
-
-<p className="text-blue-500 mt-2">
-
-Processing resume...
-
-</p>
-
-)}
-
-</div>
-
-);
-
+      <button onClick={handleUpload}>
+        Upload Resume
+      </button>
+    </div>
+  );
 }

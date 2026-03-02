@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  outputFileTracingRoot: path.join(process.cwd(), ".."),
+  serverExternalPackages: ["mammoth", "lop", "underscore", "pdf-parse"],
 };
 
 export default nextConfig;

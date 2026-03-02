@@ -1,45 +1,38 @@
 "use client";
+import { useEffect, useState } from "react";
 
-import { useState } from "react";
+type Resume = {
+  _id: string;
+  fileName: string;
+};
 
-export default function UploadResume() {
+export default function ResumeList({
+  onSelect,
+}: {
+  onSelect: (id: string) => void;
+}) {
+  const [resumes, setResumes] = useState<Resume[]>([]);
 
-const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    fetch("/api/resumes")
+      .then((res) => res.json())
+      .then(setResumes);
+  }, []);
 
-async function upload(e: any) {
-
-setLoading(true);
-
-const formData = new FormData();
-
-formData.append("file", e.target.files[0]);
-
-await fetch("/api/resumes/upload", {
-
-method: "POST",
-
-body: formData
-
-});
-
-setLoading(false);
-
-alert("Uploaded");
-
-}
-
-return (
-
-<div>
-
-<h3>Upload Resume</h3>
-
-<input type="file" onChange={upload} />
-
-{loading && <p>Processing...</p>}
-
-</div>
-
-);
-
+  return (
+    <div className="mb-6">
+      <h2 className="text-xl font-bold mb-2">Select Resume</h2>
+      <select
+        className="border p-2 w-full"
+        onChange={(e) => onSelect(e.target.value)}
+      >
+        <option value="">-- Select Resume --</option>
+        {resumes.map((resume) => (
+          <option key={resume._id} value={resume._id}>
+            {resume.fileName}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
 }
