@@ -1,46 +1,43 @@
-import clientPromise from "@/lib/mongo";
+import { NextRequest, NextResponse } from "next/server";
+import { getMongoClient, getDbName } from "@/lib/mongo";
 import { matchResumeWithLLM } from "@/lib/llmService";
-import type { ResumeMatchResult } from "@/lib/types";
+import { ObjectId } from "mongodb";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const { jobRequirements } = await req.json();
+    const { resumeId, jobDescription } = await req.json();
 
-    if (!jobRequirements || typeof jobRequirements !== "string") {
-      return Response.json(
-        { error: "jobRequirements is required" },
-        { status: 400 }
-      );
+    if (!resumeId || !jobDescription) {
+      return NextResponse.json({ error: "Missing data" }, { status: 400 });
     }
 
-    const client = await clientPromise;
-    const db = client.db("resumeMatcher");
-    const resumes = await db.collection("resumes").find().toArray();
+    const client = await getMongoClient();
+    const db = client.db(getDbName());
 
-    const results: Array<ResumeMatchResult & { _id: string }> = [];
+    const resume = await db.collection("resumes").findOne({
+      _id: new ObjectId(resumeId),
+    });
 
-    for (const resume of resumes) {
-      const resumeData = {
-        resume_text: resume.resume_text ?? resume.text ?? "",
-        llm_summary: resume.llm_summary ?? "",
-        llm_skills: resume.llm_skills ?? [],
-        llm_roles: resume.llm_roles ?? [],
-        llm_experience_years: resume.llm_experience_years ?? 0,
-      };
-
-      const llmResult = await matchResumeWithLLM(jobRequirements, resumeData);
-
-      results.push({
-        _id: resume._id.toString(),
-        ...llmResult,
-      });
+    if (!resume) {
+      return NextResponse.json({ error: "Resume not found" }, { status: 404 });
     }
 
-    results.sort((a, b) => (b.match_score ?? 0) - (a.match_score ?? 0));
+    const finalResult = await matchResumeWithLLM(resume.text || "", jobDescription);
 
-    return Response.json(results, { status: 200 });
+    await db.collection("matches").insertOne({
+      resumeId: resume._id,
+      jobDescription,
+      result: finalResult,
+      createdAt: new Date(),
+    });
+
+    return NextResponse.json(finalResult, { status: 200 });
+
   } catch (error) {
-    console.error("Match route error:", error);
-    return Response.json({ error: "Failed to match resumes" }, { status: 500 });
+    console.error("Match error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Match failed" },
+      { status: 500 }
+    );
   }
 }

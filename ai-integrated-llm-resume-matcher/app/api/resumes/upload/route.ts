@@ -1,41 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
-import { analyzeResumeWithLLM, type LLMAnalysisResult } from "@/lib/llmService";
-import clientPromise from "@/lib/mongo";
+import { getMongoClient, getDbName } from "@/lib/mongo";
+import pdfParse from "pdf-parse";
 
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    const resumeFile = formData.get("file") as File;
+    const file = formData.get("file") as File;
 
-    if (!resumeFile)
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    if (!file) {
+      return NextResponse.json(
+        { error: "No file uploaded" },
+        { status: 400 }
+      );
+    }
 
-    const resumeText = await resumeFile.text();
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
 
-    // Analyze resume with Gemini LLM
-    const llmResult: LLMAnalysisResult = await analyzeResumeWithLLM(resumeText);
+    const parsed = await pdfParse(buffer);
+    const extractedText = parsed.text;
 
-    // Save to MongoDB
-    const client = await clientPromise;
-    const db = client.db("resumeMatcher");
-    const resumesCollection = db.collection("resumes");
+    if (!extractedText) {
+      return NextResponse.json(
+        { error: "Could not extract text from PDF" },
+        { status: 400 }
+      );
+    }
 
-    const inserted = await resumesCollection.insertOne({
-      resume_text: resumeText,
-      llm_summary: llmResult.llm_summary,
-      llm_skills: llmResult.llm_skills,
-      llm_roles: llmResult.llm_roles,
-      llm_experience_years: llmResult.llm_experience_years,
+    const client = await getMongoClient();
+    const db = client.db(getDbName());
+
+    const result = await db.collection("resumes").insertOne({
+      fileName: file.name,
+      text: extractedText,
       createdAt: new Date(),
     });
 
     return NextResponse.json({
-      message: "Resume uploaded and analyzed successfully",
-      id: inserted.insertedId,
-      llmResult,
+      message: "Resume uploaded successfully",
+      resumeId: result.insertedId,
     });
-  } catch (err) {
-    console.error("Upload error:", err);
-    return NextResponse.json({ error: "Failed to upload resume" }, { status: 500 });
+
+  } catch (error) {
+    console.error("Upload error:", error);
+    return NextResponse.json(
+      { error: "Upload failed" },
+      { status: 500 }
+    );
   }
 }
